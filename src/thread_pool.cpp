@@ -2,68 +2,78 @@
 
 using namespace std;
 
-thread_pool::thread_pool(size_t num_threads) {
+thread_pool::thread_pool(size_t number_of_threads_desired) {
 
+	num_threads = number_of_threads_desired;
 	threads_keepalive = true;
 	threads_on_hold = false;
 	threads_all_idle = true;
 	num_threads_alive = 0;
 	num_threads_working = 0;
-	job_queue = make_shared<conc_queue>();
+	job_queue = make_shared<conc_queue<>>();
 	threads = make_unique<vector<thread>>();
 
 	for (size_t i = 0; i < num_threads; i++) {
 		threads->push_back(thread(thread_do));
 	}
 
-	// busy wait below, might try to make better
-	/* Wait for threads to initialize */
-	while (thpool_p->num_threads_alive != num_threads) {}
+	unique_lock<mutex> numThreadsAliveLock(num_threads_alive_mutex);
+	all_threads_alive.wait(numThreadsAliveLock, num_threads_alive < num_threads);
 }
 void thread_pool::thread_do() {
 
-	unique_lock<mutex> lk1(num_threads_alive_mutex);
+	size_t temp_num_threads_alive;
+	unique_lock<mutex> numThreadsAliveLock(num_threads_alive_mutex);
 	num_threads_alive++;
-	lk1.unlock();
+	temp_num_threads_alive = num_threads_alive;
+	numThreadsAliveLock.unlock();
+	if (temp_num_threads_alive == num_threads) {
+		all_threads_alive.notify_one();
+	}
 	
-	unique_lock<mutex> lk2(threads_keepalive_mutex);
+	unique_lock<mutex> keepAliveLock(threads_keepalive_mutex);
 	bool temp_threads_keepalive = threads_keepalive;
-	lk2.unlock();
+	keepAliveLock.unlock();
 
 	while (temp_threads_keepalive) {
 
-		// replace line below with condition variable
-		bsem_wait(thpool_p->jobqueue.has_jobs);
+		unique_lock<mutex> jobQueueHasJobsLock(job_queue_has_jobs_mutex);
+		job_queue_has_jobs.wait(jobQueueHasJobsLock, !job_queue.empty());
 
-		if (threads_keepalive) {
+		keepAliveLock.lock();
+		temp_threads_keepalive = threads_keepalive;
+		keepAliveLock.unlock();
 
-			pthread_mutex_lock(&thpool_p->thcount_lock);
-			thpool_p->num_threads_working++;
-			pthread_mutex_unlock(&thpool_p->thcount_lock);
+		if (temp_threads_keepalive) {
 
-			/* Read job from queue and execute it */
-			void (*func_buff)(void*);
-			void* arg_buff;
-			job* job_p = jobqueue_pull(&thpool_p->jobqueue);
-			if (job_p) {
-				func_buff = job_p->function;
-				arg_buff = job_p->arg;
-				func_buff(arg_buff);
-				free(job_p);
+			unique_lock<mutex> numThreadsWorkingLock(num_threads_working_mutex);
+			if (num_threads_working == 0) {
+				threads_all_idle = false;
 			}
+			num_threads_working++;
+			numThreadsWorkingLock.unlock();
 
-			pthread_mutex_lock(&thpool_p->thcount_lock);
-			thpool_p->num_threads_working--;
-			if (!thpool_p->num_threads_working) {
-				pthread_cond_signal(&thpool_p->threads_all_idle);
+			auto functionToDo = job_queue.try_pop();
+			functionToDo();
+
+			numThreadsWorkingLock.lock();
+			num_threads_working--;
+			if (num_threads_working == 0) {
+				threads_all_idle = true;
 			}
-			pthread_mutex_unlock(&thpool_p->thcount_lock);
-
+			numThreadsWorkingLock.unlock();
 		}
 	}
-	pthread_mutex_lock(&thpool_p->thcount_lock);
-	thpool_p->num_threads_alive--;
-	pthread_mutex_unlock(&thpool_p->thcount_lock);
-
-	return NULL;
+	numThreadsAliveLock.lock();
+	num_threads_alive--;
+	numThreadsAliveLock.unlock();
 }
+size_t thread_pool::get_num_threads_working() {
+	shared_lock<shared_mutex> numThreadsWorkingSharedLock(num_threads_working_shared_mutex);
+	return num_threads_working;
+}
+// want to return promise/future from this so calling thread can wait for result
+//void thread_pool::add_work(void* function, void* arg1, void* arg2) {
+//	// need to make variadic function
+//	auto functionToDo = bind(function, arg1, arg2);
+//}
