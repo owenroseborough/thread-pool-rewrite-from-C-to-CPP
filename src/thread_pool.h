@@ -4,10 +4,13 @@
 #include <condition_variable>
 #include <vector>
 #include <thread>
+#include <any>
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include "conc_queue.h"
+
+using namespace std;
 
 class thread_pool {
 
@@ -28,11 +31,12 @@ private:
 	mutex num_threads_working_mutex;
 	shared_mutex num_threads_working_shared_mutex;
 
-	shared_ptr<conc_queue<function<void()>>> job_queue;
+	shared_ptr<conc_queue<shared_ptr<function<void()>>>> job_queue;
+
 	condition_variable job_queue_has_jobs;
 	mutex job_queue_has_jobs_mutex;
 
-	unique_ptr<vector<thread>> threads;
+	vector<thread> threads;
 
 public:
 	thread_pool(size_t);

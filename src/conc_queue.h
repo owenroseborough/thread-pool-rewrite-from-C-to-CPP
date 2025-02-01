@@ -31,20 +31,19 @@ private:
         {
             return nullptr;
         }
-        std::unique_ptr<node> const old_head = std::move(head);
+        std::unique_ptr<node> old_head = std::move(head);
         head = std::move(old_head->next);
         return old_head;
     }
 
-
 public:
-    threadsafe_queue() :
+    conc_queue() :
         head(new node), tail(head.get())
     {
     }
 
-    threadsafe_queue(const threadsafe_queue& other) = delete;
-    threadsafe_queue& operator=(const threadsafe_queue& other) = delete;
+    conc_queue(const conc_queue& other) = delete;
+    conc_queue& operator=(const conc_queue& other) = delete;
 
     std::shared_ptr<T> try_pop()
     {
